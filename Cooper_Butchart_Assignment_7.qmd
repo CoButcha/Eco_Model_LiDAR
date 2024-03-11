@@ -1,0 +1,165 @@
+---
+title: "Cooper_Butchart_Assignment_7"
+format: html
+editor: visual
+---
+
+## Quarto
+
+```{r}
+library(units)
+install.packages("lidR")
+library(lidR)
+library(terra)
+library(mapview)
+install.packages("RCSF")
+library(sp)
+library(raster)
+install_unit("stems")
+```
+
+Question 1 - Download the .LAS file from Moodle with your name on it.
+
+```{r}
+### Question 1
+
+las <- readLAS("Cooper Butchart.las")
+#a) How many points are in your LAS file? Provide a line of code to determine this.
+num_points <- npoints(las)
+print(num_points)
+#b) What is the maximum elevation within your point cloud? Provide a line of code to determine this.
+max_elevation <- max(las@data$Z)
+print(max_elevation)
+```
+
+Question 2 - This question will get you producing various DEM’s:
+
+```{r}
+### Question 2
+
+#a) Classify ground points using the cloth simulated function (CSF) algorithm and produce a DEM using the triangular irregular network (TIN) algorithm.
+las_ground <- classify_ground(las, csf())
+
+dem <- rasterize_terrain(las_ground, res = 1, algorithm = tin())
+plot(dem)
+
+
+#b)	Classify ground points using a progressive morphological filter (PMF) algorithm and produce a DEM using the TIN algorithm.
+las_ground_pmf <- classify_ground(las, pmf(ws = 0.05, th = 0.15))
+plot(las_ground_pmf)
+dem_pmf <- grid_terrain(las_ground_pmf, algorithm = tin())
+plot(dem_pmf)
+
+
+#c)	Classify ground points using the CSF algorithm and produce a DEM using the inverse distance weighting algorithm.
+las_ground_csf <- classify_ground(las_ground, csf())
+plot(las_ground_csf)
+
+dem_idw = rasterize_terrain(las_ground_csf, algorithm = knnidw(k = 10, p = 2))
+plot(dem_idw)
+
+#d) Briefly describe how the PMF algorithm works. 
+
+#PMF starts by analyzing the lowest points which are assumed to be the ground. It starts by creating a map over a small area and increases in size which helps to ignore bushes, trees and buildings. It effectively filters out things above ground.
+```
+
+Question 3 - This question gets you producing some canopy height models (CHM’s):
+
+```{r}
+### Question 3
+#a)	Normalize the point cloud using the inverse distance weighting algorithm, and then produce a CHM using the point-to-raster algorithm.
+las_norm <- normalize_height(las_ground, algorithm = knnidw(k = 10, p = 2))
+plot(las_norm)
+resolution <- 0.8
+chm <- rasterize_canopy(las_norm, resolution, p2r())
+plot(chm)
+
+#b) Normalize the point cloud using the TIN algorithm and then produce a CHM using the TIN algorithm as well (i.e.: the “dsmtin” algorithm).
+las_normalize <- normalize_height(las_ground, algorithm = tin())
+chm_tin <- grid_canopy(las_normalize, resolution, algorithm = dsmtin())
+plot(chm_tin)
+
+#c)	Normalize the point cloud using the TIN algorithm, and then produce a CHM using the point-to-raster algorithm.
+chm_p2r <- grid_canopy(las_normalize, resolution, p2r())
+plot(chm_p2r)
+
+#d)	Briefly describe how the inverse distance weighting algorithm works.
+
+#IDW estimates unknown values by taking an average of nearby known values. Closer points will have a stronger weighted value.
+
+```
+
+Question 4 - Choose one of the three normalization/CHM combinations from question three to move forward with.
+
+```{r}
+### Question 4
+#a)	Perform individual tree segmentation (ITS) of the normalized point cloud using the Dalponte 2016 algorithm.
+ttops <- locate_trees(las_normalize, lmf(ws = 5))
+mapview(ttops)
+plot(ttops)
+
+las_its_dalponte <- segment_trees(las_normalize, dalponte2016(chm, ttops))
+plot(las_its_dalponte, color = "treeID")
+
+plot(chm, col = height.colors(50))
+
+
+?dalponte2016
+
+algo <- dalponte2016(chm = chm_p2r, treetops = ttops)
+las_trees <- segment_trees(las_normalize, algo)
+plot(las_trees)
+
+#b)	Perform ITS of the normalized point cloud using the Li et al. 2012 algorithm.
+algo2 <- li2012()
+las_li <- segment_trees(las_normalize, algo2, attribute = "IDli")
+plot(las_li, color = "IDli")
+
+
+#c)	Perform ITS of the normalized point cloud using the Silva 2016 algorithm.
+las_silva2016 <- segment_trees(las_normalize, silva2016(chm, ttops))
+plot(las_silva2016, color = "treeID")
+
+
+
+#d)	Briefly describe how the Silva 2016 algorithm works.
+
+#The Silva 2016 algorithm works by looking at the forest stand from above and smooths out the tree canopy, making it easier to see where each tree is. It treats the data as a topographic surface and simulates where water would flow. Then it seperates one tree from another.
+
+```
+
+Question 5 - Retrieve the crown metrics for each of the tree segmented point clouds produced in number 4. How many trees were identified in each algorithm? What is the overall tree density in each of the segmented point clouds?
+
+```{r}
+#a)
+las_its_dalponte <- segment_trees(las_norm, algorithm = dalponte2016(chm, ttops))
+metrics_dal <- crown_metrics(las_its_dalponte, .stdtreemetrics, geom = "concave")
+round(set_units(nrow(metrics_dal), "stems") / set_units(st_area(las_its_dalponte), "ha"))
+trees_dal <- (set_units(nrow(metrics_dal), "stems"))
+mapview(metrics_dal, zcol = "treeID")
+
+# Trees total = 1344
+# Tree density = 240 stems/ha
+
+
+
+#b)
+las_its_li <- segment_trees(las_norm, algorithm = li2012())
+metrics_li <- crown_metrics(las_its_li, .stdtreemetrics, geom = "concave")
+round(set_units(nrow(metrics_li), "stems") / set_units(st_area(las_its_li), "ha"))
+trees_li <- (set_units(nrow(metrics_li), "stems"))
+mapview(metrics_li, zcol = "treeID")
+
+# Trees total = 2283
+# Tree density = 408 stems/ha
+
+#c)
+las_its_silva <- segment_trees(las_norm, algorithm = silva2016(chm, ttops))
+metrics_silv <- crown_metrics(las_its_silva, .stdtreemetrics, geom = "concave")
+round(set_units(nrow(metrics_silv), "stems") / set_units(st_area(las_its_silva), "ha"))
+trees_silv <- (set_units(nrow(metrics_silv), "stems"))
+mapview(metrics_silv, zcol = "treeID")
+
+# Trees total = 1377
+# Tree density = 246 stems/ha
+```
